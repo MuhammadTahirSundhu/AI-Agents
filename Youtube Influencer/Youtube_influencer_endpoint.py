@@ -1,21 +1,38 @@
-
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Any
 import asyncio
 import re
-import requests
 import os
 import json
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain.prompts import PromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
-from youtube_apis import fetch_channel_with_their_avg_comments, parse_json_to_context_string, read_and_parse_json
-from notion_database import create_influencer, create_query, create_user, notion
+from youtube_apis import read_and_parse_json , fetch_channel_with_their_avg_comments , parse_json_to_context_string
+from notion_database import create_chat_history, get_chat_history_for_user
 
 # Load environment variables
 load_dotenv()
 
-app = Flask(__name__)
+app = FastAPI(title="YouTube Influencer Finder API", version="1.0.0")
+
+# Pydantic models for request/response
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class InfluencerFinderRequest(BaseModel):
+    input_query: str
+    ChatHistory: List[ChatMessage] = []
+    user_id: str
+
+class InfluencerFinderResponse(BaseModel):
+    chat_history: List[ChatMessage]
+    response: str
+
+class HealthResponse(BaseModel):
+    status: str
+    service: str
 
 def convert_dict_to_langchain_messages(chat_history_dict):
     """Convert dictionary format chat history to LangChain message objects."""
@@ -34,48 +51,39 @@ def convert_langchain_to_dict(chat_history):
     return [{"role": msg.type, "content": msg.content} for msg in chat_history]
 
 def call_llm(prompt, chat_history):
-    """Call the external LLM API or fallback to Google Gemini if API fails."""
-    url = "https://206c-20-106-58-127.ngrok-free.app/chat"
+    """Call the OpenAI API with GPT-4o model."""
+    from openai import OpenAI
+    
     prompt_text = prompt.text if hasattr(prompt, 'text') else str(prompt)
     
-    # Prepare messages for API or Gemini
+    role_mapping = {
+        "human": "user",
+        "ai": "assistant",
+        "system": "system",
+        "assistant": "assistant",
+        "user": "user"
+    }
+    
     messages = [
-        SystemMessage(content="""You are an ethical AI Influencer Sourcing Agent designed to assist users in finding YouTube influencers for marketing campaigns or answering general queries. 
+        {"role": "system", "content": """You are an ethical AI Influencer Sourcing Agent designed to assist users in finding YouTube influencers for marketing campaigns or answering general queries. 
         Your responses must be honest, transparent, and respect privacy. You have access to a function for fetching influencer data and must store results before responding. 
-        Interpret user intent, suggest functions when unclear, and prompt for missing parameters."""),
-        *chat_history,
-        HumanMessage(content=prompt_text)
+        Interpret user intent, suggest functions when unclear, and prompt for missing parameters."""},
+        *[{"role": role_mapping.get(msg.type, "user"), "content": msg.content} for msg in chat_history],
+        {"role": "user", "content": prompt_text}
     ]
 
-    # Try external API first
     try:
-        payload = {
-            "messages": [{"role": msg.type, "content": msg.content} for msg in messages],
-            "temperature": 0.5,
-            "model": "gpt-4o"
-        }
-        response = requests.post(url, json=payload, timeout=10)
-        response.raise_for_status()
-        api_response = response.json()
-        if api_response.get("status") == "success":
-            return api_response.get("response")
-        else:
-            print(f"API request failed: {api_response.get('message', 'No message provided')}")
-    except (requests.RequestException, ValueError) as e:
-        print(f"External API failed: {str(e)}. Switching to Google Gemini.")
-
-    # Fallback to Google Gemini
-    try:
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
             temperature=0.5
         )
-        response = llm.invoke(messages)
-        return response.content
+        return response.choices[0].message.content
     except Exception as e:
-        return f"Error: Failed to connect to Google Gemini - {str(e)}"
-
+        print(f"OpenAI API failed: {str(e)}")
+        return f"Error: Failed to connect to OpenAI API - {str(e)}"
+    
 def extract_json_response_to_list(input_text):
     """Extract JSON data from input text and store it in a list."""
     try:
@@ -109,6 +117,7 @@ def create_prompt_template():
         - If no chat history data is available, do NOT create fictional influencer information
         - If chat history is empty or contains no influencer data, only suggest fetching new data or ask for clarification
         - NEVER generate sample data, placeholder information, or hypothetical results
+        - If the user query is 'exit', 'quit', or 'end', respond with 'Session ended. Chat history saved.' and do not process further.
 
         **Available Functions**:
            1. **Name**: Fetch Influencers
@@ -157,7 +166,7 @@ def create_prompt_template():
                 - End response with "Finished"
            
            7. **Ranked Result Format**:
-                When ranking channels from Chat History data, extract and show these details in JSON format:
+                When ranking channels from Chat History data, extract and show these details in JSON format, Make sure the keyword "```json" and "Store_in_Notion_database" must include because it is used to extract the JSON data from the response:
                 Store_in_Notion_database  
                 ```json
                 [
@@ -181,11 +190,12 @@ def create_prompt_template():
                 ```
 
         **Response Logic**:
-        1. First, check if Chat History contains influencer data
-        2. If YES: Immediately rank the available data and provide JSON output
-        3. If NO: Determine if user wants to fetch new data or answer general questions
-        4. Never mix real data with fake data
-        5. Always be transparent about data availability
+        1. If the user query is 'exit', 'quit', or 'end', respond with 'Session ended. Chat history saved.' and do not process further
+        2. Check if Chat History contains influencer data
+        3. If YES: Immediately rank the available data and provide JSON output
+        4. If NO: Determine if user wants to fetch new data or answer general questions
+        5. Never mix real data with fake data
+        6. Always be transparent about data availability
 
         **Chat History Data**: {ChatHistory}
         **User Query**: {Query}
@@ -194,7 +204,7 @@ def create_prompt_template():
         - Use ONLY real data from Chat History section
         - For method=1 (trending), always use empty niche
         - For method=2, extract niche from user query
-        - If Chat History has data, rank it immediately - don't ask to fetch more unless specificallyColour requested
+        - If Chat History has data, rank it immediately - don't ask to fetch more unless specifically requested
         """,
         input_variables=['ChatHistory', 'Query']
     )
@@ -209,62 +219,41 @@ def parse_fetch_command(response):
         max_results = int(match.group(2))
         niche_raw = match.group(3).strip()
         
-        if method == 1:
-            niche = None
-        else:
-            niche = niche_raw if niche_raw else None
-            
+        niche = None if method == 1 else (niche_raw if niche_raw else None)
         return method, max_results, niche
     return None, None, None
 
-async def store_influencers_in_database(influencers, user_id):
-    """Store influencers in the database with enhanced error handling."""
-    try:
-        if not user_id:
-            print("Error: user_id is missing")
-            return False
-
-        if not influencers:
-            print("Error: No influencers provided for storage")
-            return False
-
-        for influencer in influencers:
-            required_fields = ["Channel Name", "Subscribers", "Total Views"]
-            if not all(key in influencer for key in required_fields):
-                print(f"Skipping influencer due to missing fields: {influencer}")
-                continue
-
-            influencer_id = await create_influencer(
-                channel_name=influencer.get("Channel Name", ""),
-                channel_url=influencer.get("External Links", ""),
-                views=influencer.get("Total Views", 0),
-                subscribers=influencer.get("Subscribers", 0),
-                video_count=influencer.get("Videos Count", 0),
-                handle=influencer.get("Handle", ""),
-                description=influencer.get("Description", ""),
-                country=influencer.get("Country", ""),
-                joined_date=influencer.get("Joined Date", ""),
-                top_video_links=influencer.get("Top Video Links", ""),
-                top_comments=influencer.get("Top Comments", ""),
-                user_id=user_id
-            )
-            if not influencer_id:
-                print(f"Failed to create influencer {influencer.get('Channel Name', 'Unknown')}")
-                return False
-
-        print("All influencers stored successfully")
-        return True
-    except Exception as e:
-        print(f"Error storing influencers: {str(e)}")
-        return False
-    finally:
-        await notion.aclose()
-
-def process_influencer_query(input_query, chat_history_dict, user_id):
+async def process_influencer_query(input_query, chat_history_dict, user_id):
     """Process a single influencer query with improved logging."""
+    # Check for exit command
+    exit_commands = ["exit", "quit", "end"]
+    if input_query.lower().strip() in exit_commands:
+        # Store chat history in Notion
+        chat_history = convert_dict_to_langchain_messages(chat_history_dict)
+        try:
+            chat_history_id = await create_chat_history(
+                input_query=chat_history_dict[0]["content"] if chat_history_dict else "Help me to find influencers",
+                user_id=user_id,
+                chat_history=convert_langchain_to_dict(chat_history),
+                response="Session ended. Chat history saved."
+            )
+            database_stored = bool(chat_history_id)
+            print("Database Storage Result:", database_stored)
+        except Exception as e:
+            print(f"Error storing chat history in database: {str(e)}")
+            database_stored = False
+
+        return {
+            "updated_chat_history": convert_langchain_to_dict(chat_history),
+            "response": "Session ended. Chat history saved.",
+            "database_stored": database_stored,
+            "fetch_attempted": False,
+            "ranked_channels": []
+        }
+
+    # Normal query processing
     chat_history = convert_dict_to_langchain_messages(chat_history_dict)
     chat_history.append(HumanMessage(content=input_query))
-    
     prompt_template = create_prompt_template()
     final_prompt = prompt_template.invoke({"ChatHistory": convert_langchain_to_dict(chat_history), "Query": input_query})
     response = call_llm(final_prompt, chat_history)
@@ -272,21 +261,13 @@ def process_influencer_query(input_query, chat_history_dict, user_id):
     print("LLM Response:", response)
     
     chat_history.append(AIMessage(content=response))
-    database_stored = False
     ranked_channels = []
+    fetch_attempted = False
+
     if "```json" in response or "Store_in_Notion_database" in response:
         ranked_channels = extract_json_response_to_list(response)
         print("Extracted Ranked Channels:", ranked_channels)
-        if ranked_channels:
-            try:
-                database_stored = asyncio.run(store_influencers_in_database(ranked_channels, user_id))
-                print("Database Storage Result:", database_stored)
-            except Exception as e:
-                print(f"Error storing in database: {str(e)}")
-    print("Extracted Ranked Channels:", ranked_channels)
 
-
-    fetch_attempted = False
     if "Fetch Influencer" in response:
         method, max_results, niche = parse_fetch_command(response)
         if method is not None and max_results is not None:
@@ -295,7 +276,11 @@ def process_influencer_query(input_query, chat_history_dict, user_id):
                 chat_history.append(AIMessage(content=error_msg))
             else:
                 try:
-                    new_data = read_and_parse_json("./channel_comments.json")  # Replace with actual API call
+                    #  Uncomment the next line to use actual API call
+                    result = fetch_channel_with_their_avg_comments(method, max_results, niche)
+                    new_data = parse_json_to_context_string(result)
+                    # for getting data from file
+                    # new_data = read_and_parse_json("./channel_comments.json")
                     chat_history.append(AIMessage(content=new_data))
                     fetch_attempted = True
                 except Exception as e:
@@ -307,56 +292,80 @@ def process_influencer_query(input_query, chat_history_dict, user_id):
     return {
         "updated_chat_history": updated_chat_history,
         "response": response,
-        "database_stored": database_stored,
+        "database_stored": False,  # No storage until exit
         "fetch_attempted": fetch_attempted,
         "ranked_channels": ranked_channels
     }
 
-@app.route('/Youtube_Influencer_Finder', methods=['POST'])
-def youtube_influencer_finder():
+def format_ranked_channels(ranked_channels):
+    """Format ranked channels into a human-readable string."""
+    output = ["📊 Ranked Channels:", "-" * 50]
+    for i, channel in enumerate(ranked_channels, 1):
+        output.append(f"{i}. {channel.get('Channel Name', 'Unknown Channel')}")
+        output.append(f"   - Channel ID: {channel.get('Channel ID', 'N/A')}")
+        output.append(f"   - Handle: {channel.get('Handle', 'N/A')}")
+        output.append(f"   - Subscribers: {channel.get('Subscribers', 0)}")
+        output.append(f"   - Total Views: {channel.get('Total Views', 0)}")
+        output.append(f"   - Videos Count: {channel.get('Videos Count', 0)}")
+        output.append(f"   - Country: {channel.get('Country', 'N/A')}")
+        output.append(f"   - Joined Date: {channel.get('Joined Date', 'N/A')}")
+        output.append(f"   - Ranking Score: {channel.get('Ranking Score', 0)}")
+        output.append("-" * 50)
+    return "\n".join(output)
+
+@app.post('/Youtube_Influencer_Finder', response_model=List[InfluencerFinderResponse])
+async def youtube_influencer_finder(request: InfluencerFinderRequest):
     """Main endpoint for YouTube Influencer Finder chatbot."""
     try:
-        # Get input data
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-        
-        input_query = data.get('input_query', '')
-        chat_history = data.get('ChatHistory', [])  # Expect ChatHistory from client
-        user_id = data.get('user_id','')
+        input_query = request.input_query
+        chat_history = [msg.dict() for msg in request.ChatHistory]
+        user_id = request.user_id
 
+        if not chat_history:
+            result = await get_chat_history_for_user(user_id)
+            if result != "No chat history found.":
+                chat_history = result
+        
+        print("Chat History:", chat_history)
+        
         if not input_query:
-            return jsonify({"error": "input_query is required"}), 400
-        
+            raise HTTPException(status_code=400, detail="input_query is required")
+                
         # Process the query
-        result = process_influencer_query(input_query, chat_history,user_id)
-        
-        # Return the result with ranked channels
-        return jsonify({
-            "status": "success",
-            "updated_chat_history": result["updated_chat_history"],
-            "response": result["response"],
-            "database_stored": result["database_stored"],
-            "fetch_attempted": result["fetch_attempted"],
-            "ranked_channels": result["ranked_channels"]  # Include ranked channels in response
-        })
-    
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
+        result = await process_influencer_query(input_query, chat_history, user_id)
 
-@app.route('/health', methods=['GET'])
-def health_check():
+        result["updated_chat_history"].append({
+            "role": "assistant",
+            "content": f"Ranked Channels:\n{json.dumps(result['ranked_channels'], indent=2)}"
+        })        
+
+        if result["database_stored"]:
+            print("💾 Chat history successfully stored in database")
+        
+        if result["fetch_attempted"]:
+            print("🔍 Data fetch was attempted")
+
+        if result["ranked_channels"]:
+            print("📊 Ranked Channels:", json.dumps(result["ranked_channels"], indent=2))
+        
+        return [{
+            "chat_history": [ChatMessage(**msg) for msg in result["updated_chat_history"]],
+            "response": format_ranked_channels(result["ranked_channels"]) if result["ranked_channels"] else result["response"]
+        }]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get('/health', response_model=HealthResponse)
+async def health_check():
     """Health check endpoint."""
-    return jsonify({"status": "healthy", "service": "YouTube Influencer Finder"})
+    return HealthResponse(status="healthy", service="YouTube Influencer Finder")
 
 if __name__ == '__main__':
+    import uvicorn
     print("YouTube Influencer Finder API Started!")
     print("Available endpoints:")
     print("- POST /Youtube_Influencer_Finder")
     print("- GET /health")
     print("-" * 50)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    uvicorn.run("Youtube_influencer_endpoint:app", host="0.0.0.0", port=5000, reload=True)

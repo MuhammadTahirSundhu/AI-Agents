@@ -1,4 +1,5 @@
 
+from urllib import response
 import requests
 import json
 import time
@@ -18,7 +19,7 @@ class YouTubeInfluencerClient:
         self.health_url = f"{base_url}/health"
         self.chat_history = []
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.user_id = "100001"
+        self.user_id = "200001"
     
     def check_health(self) -> bool:
         """Check if the server is healthy."""
@@ -52,7 +53,7 @@ class YouTubeInfluencerClient:
                 timeout=timeout,
                 headers={"Content-Type": "application/json"}
             )
-            response.raise_for_status()
+            # response.raise_for_status()
             return response.json()
 
         except requests.exceptions.Timeout:
@@ -73,45 +74,45 @@ class YouTubeInfluencerClient:
         if not response:
             return False
             
-        if response.get("status") != "success":
-            print(f"❌ API Error: {response.get('message', 'Unknown error')}")
-            return False
+        # if response.get("status") != "success":
+        #     print(f"❌ API Error: {response.get('message', 'Unknown error')}")
+        #     return False
         
         # Print the main response
-        api_response = response.get("response", "")
-        print(f"\n🤖 Assistant: {api_response}")
-        
-        # Print ranked channels if available
-        ranked_channels = response.get("ranked_channels", [])
-        if ranked_channels:
-            print("\n📊 Ranked Channels:")
-            print("-" * 50)
-            for i, channel in enumerate(ranked_channels, 1):
-                print(f"{i}. {channel.get('Channel Name', 'Unknown Channel')}")
-                print(f"   - Channel ID: {channel.get('Channel ID', 'N/A')}")
-                print(f"   - Handle: {channel.get('Handle', 'N/A')}")
-                print(f"   - Subscribers: {channel.get('Subscribers', 0)}")
-                print(f"   - Total Views: {channel.get('Total Views', 0)}")
-                print(f"   - Videos Count: {channel.get('Videos Count', 0)}")
-                print(f"   - Country: {channel.get('Country', 'N/A')}")
-                print(f"   - Joined Date: {channel.get('Joined Date', 'N/A')}")
-                print(f"   - Ranking Score: {channel.get('Ranking Score', 0)}")
-                print("-" * 50)
-            # Append ranked channels to chat history as an assistant message
-            self.chat_history.append({
-                "role": "Ranked Channels",
-                "content": json.dumps(ranked_channels, indent=2)
-            })
+        # api_response = response["response"]
+        print(f"🤖 Assistant: {json.dumps(response, indent=2)}")   
+        response_content = response[0]["response"]
+        print(response_content)     
+        # # Print ranked channels if available
+        # ranked_channels = response.get("ranked_channels", [])
+        # if ranked_channels:
+        #     print("\n📊 Ranked Channels:")
+        #     print("-" * 50)
+        #     for i, channel in enumerate(ranked_channels, 1):
+        #         print(f"{i}. {channel.get('Channel Name', 'Unknown Channel')}")
+        #         print(f"   - Channel ID: {channel.get('Channel ID', 'N/A')}")
+        #         print(f"   - Handle: {channel.get('Handle', 'N/A')}")
+        #         print(f"   - Subscribers: {channel.get('Subscribers', 0)}")
+        #         print(f"   - Total Views: {channel.get('Total Views', 0)}")
+        #         print(f"   - Videos Count: {channel.get('Videos Count', 0)}")
+        #         print(f"   - Country: {channel.get('Country', 'N/A')}")
+        #         print(f"   - Joined Date: {channel.get('Joined Date', 'N/A')}")
+        #         print(f"   - Ranking Score: {channel.get('Ranking Score', 0)}")
+        #         print("-" * 50)
+        #     # Append ranked channels to chat history as an assistant message
+        #     self.chat_history.append({
+        #         "role": "Ranked Channels",
+        #         "content": json.dumps(ranked_channels, indent=2)
+        #     })
         
         # Update internal state with updated chat history from server
-        self.chat_history = response.get("updated_chat_history", self.chat_history)
+        self.chat_history = response[0]["chat_history"]
+        # # Show additional info
+        # if response.get("database_stored"):
+        #     print("💾 Data successfully stored in database")
         
-        # Show additional info
-        if response.get("database_stored"):
-            print("💾 Data successfully stored in database")
-        
-        if response.get("fetch_attempted"):
-            print("🔍 Data fetch was attempted")
+        # if response.get("fetch_attempted"):
+        #     print("🔍 Data fetch was attempted")
         
         return True
     

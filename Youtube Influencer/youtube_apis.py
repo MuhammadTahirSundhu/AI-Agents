@@ -69,10 +69,7 @@ def fetch_trending_videos(country: str, type_filter: str, max_results: int) -> L
             break
         
         time.sleep(CONFIG["RATE_LIMIT_DELAY"])
-    
-    with open("trending_videos.json", "w") as f:
-        json.dump(videos, f, indent=4)
-    
+        
     return videos
 
 def fetch_channel_details(channel_id: str, country: str, language: str) -> Optional[Dict]:
@@ -127,8 +124,7 @@ def method_1_trending_channels(country: str, type_filter: str, max_results: int)
         if channel_data:
             channels.append(channel_data)
     
-    with open("trending_channels.json", "w") as f:
-        json.dump(channels, f, indent=4)
+    
     
     return channels
 
@@ -180,8 +176,7 @@ def method_2_popular_channels_in_niche(niche: str, country: str, language: str, 
         
         time.sleep(CONFIG["RATE_LIMIT_DELAY"])
     
-    with open("popular_videos.json", "w") as f:
-        json.dump(videos, f, indent=4)
+    
     
     channel_ids = list(set(video["channelId"] for video in videos))
     channels = []
@@ -191,8 +186,7 @@ def method_2_popular_channels_in_niche(niche: str, country: str, language: str, 
         if channel_data:
             channels.append(channel_data)
     
-    with open("popular_channels.json", "w") as f:
-        json.dump(channels, f, indent=4)
+    
     
     return channels
 
@@ -242,8 +236,7 @@ def get_top_popular_videos_of_channel(channel_id: str, max_results: int) -> List
         
         time.sleep(CONFIG["RATE_LIMIT_DELAY"])
     
-    with open(f"channel_popular_videos_{channel_id}.json", "w") as f:
-        json.dump(videos, f, indent=4)
+    
     
     return videos
 
@@ -302,8 +295,7 @@ def fetch_popular_video_comments(video_id: str, max_results: int, language: str)
         
         time.sleep(CONFIG["RATE_LIMIT_DELAY"])
     
-    with open(f"video_comments_{video_id}.json", "w") as f:
-        json.dump(comments, f, indent=4)
+    
     
     return comments, formatted_comments
 
