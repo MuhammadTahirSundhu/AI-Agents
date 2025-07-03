@@ -50,7 +50,6 @@ def convert_langchain_to_dict(chat_history):
     """Convert LangChain message objects to dictionary format."""
     return [{"role": msg.type, "content": msg.content} for msg in chat_history]
 
-
 def call_llm(prompt, chat_history):
     """Call the external LLM API."""
     url = "https://206c-20-106-58-127.ngrok-free.app/chat"
