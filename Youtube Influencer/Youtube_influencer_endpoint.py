@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain.prompts import PromptTemplate
 from youtube_apis import read_and_parse_json , fetch_channel_with_their_avg_comments , parse_json_to_context_string
 from notion_database import create_chat_history, get_chat_history_for_user
-
+import requests
 # Load environment variables
 load_dotenv()
 
@@ -50,39 +50,83 @@ def convert_langchain_to_dict(chat_history):
     """Convert LangChain message objects to dictionary format."""
     return [{"role": msg.type, "content": msg.content} for msg in chat_history]
 
+
 def call_llm(prompt, chat_history):
-    """Call the OpenAI API with GPT-4o model."""
-    from openai import OpenAI
-    
+    """Call the external LLM API."""
+    url = "https://206c-20-106-58-127.ngrok-free.app/chat"
     prompt_text = prompt.text if hasattr(prompt, 'text') else str(prompt)
     
-    role_mapping = {
-        "human": "user",
-        "ai": "assistant",
-        "system": "system",
-        "assistant": "assistant",
-        "user": "user"
+    # Convert chat history to string format for the system message
+    chat_history_str = ""
+    for msg in chat_history:
+        chat_history_str += f"{msg.type}: {msg.content}\n"
+    
+    payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are an ethical AI Influencer Sourcing Agent designed to assist users in "
+                    "finding YouTube influencers for marketing campaigns or answering general queries. "
+                    "Your responses must be honest, transparent, and respect privacy. "
+                    "You have access to a function for fetching influencer data and must store results before responding. "
+                    "Interpret user intent, suggest functions when unclear, and prompt for missing parameters."
+                    f"\n**Chat History**\n{chat_history_str}"
+                )
+            },
+            {
+                "role": "user",
+                "content": prompt_text
+            }
+        ],
+        "temperature": 0.5,
+        "model": "gpt-4o"
     }
     
-    messages = [
-        {"role": "system", "content": """You are an ethical AI Influencer Sourcing Agent designed to assist users in finding YouTube influencers for marketing campaigns or answering general queries. 
-        Your responses must be honest, transparent, and respect privacy. You have access to a function for fetching influencer data and must store results before responding. 
-        Interpret user intent, suggest functions when unclear, and prompt for missing parameters."""},
-        *[{"role": role_mapping.get(msg.type, "user"), "content": msg.content} for msg in chat_history],
-        {"role": "user", "content": prompt_text}
-    ]
-
     try:
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=0.5
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"OpenAI API failed: {str(e)}")
-        return f"Error: Failed to connect to OpenAI API - {str(e)}"
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        api_response = response.json()
+        if api_response.get("status") == "success":
+            return api_response.get("response")
+        else:
+            return f"Error: API request failed - {api_response.get('message', 'No message provided')}"
+    except requests.RequestException as e:
+        return f"Error: Failed to connect to the API - {str(e)}"
+
+# def call_llm(prompt, chat_history):
+#     """Call the OpenAI API with GPT-4o model."""
+#     from openai import OpenAI
+    
+#     prompt_text = prompt.text if hasattr(prompt, 'text') else str(prompt)
+    
+#     role_mapping = {
+#         "human": "user",
+#         "ai": "assistant",
+#         "system": "system",
+#         "assistant": "assistant",
+#         "user": "user"
+#     }
+    
+#     messages = [
+#         {"role": "system", "content": """You are an ethical AI Influencer Sourcing Agent designed to assist users in finding YouTube influencers for marketing campaigns or answering general queries. 
+#         Your responses must be honest, transparent, and respect privacy. You have access to a function for fetching influencer data and must store results before responding. 
+#         Interpret user intent, suggest functions when unclear, and prompt for missing parameters."""},
+#         *[{"role": role_mapping.get(msg.type, "user"), "content": msg.content} for msg in chat_history],
+#         {"role": "user", "content": prompt_text}
+#     ]
+
+#     try:
+#         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+#         response = client.chat.completions.create(
+#             model="gpt-4o",
+#             messages=messages,
+#             temperature=0.5
+#         )
+#         return response.choices[0].message.content
+#     except Exception as e:
+#         print(f"OpenAI API failed: {str(e)}")
+#         return f"Error: Failed to connect to OpenAI API - {str(e)}"
     
 def extract_json_response_to_list(input_text):
     """Extract JSON data from input text and store it in a list."""
@@ -154,6 +198,8 @@ def create_prompt_template():
               
            5. **General Queries**:
               - For non-influencer queries, provide concise, ethical answers
+              - If you ask you about what you can do or how you work, explain your role
+              - Don't give "Fetch Influencer: method=1, max_results=3, niche= " and "Fetch Influencer: method=2, max_results=5, niche=fitness" for general queries
               
            6. **Ranking Available Influencer Data**:
               - **ONLY rank if Chat History contains actual influencer data**
@@ -166,25 +212,19 @@ def create_prompt_template():
                 - End response with "Finished"
            
            7. **Ranked Result Format**:
-                When ranking channels from Chat History data, extract and show these details in JSON format, Make sure the keyword "```json" and "Store_in_Notion_database" must include because it is used to extract the JSON data from the response:
+                When ranking channels from Chat History data, extract and show these details in JSON format:
                 Store_in_Notion_database  
                 ```json
                 [
                   {{
                     "Channel Name": "actual_channel_name_from_chat_history",
-                    "Channel ID": "actual_channel_id_from_chat_history",
                     "Handle": "actual_handle_from_chat_history",
                     "Description": "actual_description_from_chat_history",
                     "Subscribers": actual_subscriber_count_number,
                     "Total Views": actual_total_views_number,
                     "Videos Count": actual_video_count_number,
-                    "Joined Date": "actual_joined_date_from_chat_history",
                     "Country": "actual_country_from_chat_history",
-                    "Top Video Links": "actual_video_links_from_chat_history",
-                    "Top Comments": "actual_comments_from_chat_history",
-                    "External Links": "actual_external_links_from_chat_history",
-                    "Last Updated": "current_date",
-                    "Ranking Score": calculated_score_0_to_100
+                    "Ranking Score": "actual_ranking_score_number"
                   }}
                 ]
                 ```
@@ -201,6 +241,7 @@ def create_prompt_template():
         **User Query**: {Query}
         
         Remember: 
+        - if chat history is empty dont not tell in response that chat history is empty
         - Use ONLY real data from Chat History section
         - For method=1 (trending), always use empty niche
         - For method=2, extract niche from user query
@@ -280,15 +321,16 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
                     result = fetch_channel_with_their_avg_comments(method, max_results, niche)
                     new_data = parse_json_to_context_string(result)
                     # for getting data from file
-                    # new_data = read_and_parse_json("./channel_comments.json")
-                    chat_history.append(AIMessage(content=new_data))
+                    new_data = read_and_parse_json("./channel_comments.json")
+                    chat_history.pop()  # Remove last AIMessage
+                    chat_history.append(AIMessage(content=f"{new_data} \n\n DO you want me to rank them on basis of their popularity?"))
                     fetch_attempted = True
                 except Exception as e:
                     error_msg = f"Error fetching influencer data: {str(e)}"
                     chat_history.append(AIMessage(content=error_msg))
     
     updated_chat_history = convert_langchain_to_dict(chat_history)
-    
+    response = chat_history[-1].content if fetch_attempted else response
     return {
         "updated_chat_history": updated_chat_history,
         "response": response,
@@ -302,13 +344,11 @@ def format_ranked_channels(ranked_channels):
     output = ["📊 Ranked Channels:", "-" * 50]
     for i, channel in enumerate(ranked_channels, 1):
         output.append(f"{i}. {channel.get('Channel Name', 'Unknown Channel')}")
-        output.append(f"   - Channel ID: {channel.get('Channel ID', 'N/A')}")
         output.append(f"   - Handle: {channel.get('Handle', 'N/A')}")
         output.append(f"   - Subscribers: {channel.get('Subscribers', 0)}")
         output.append(f"   - Total Views: {channel.get('Total Views', 0)}")
         output.append(f"   - Videos Count: {channel.get('Videos Count', 0)}")
         output.append(f"   - Country: {channel.get('Country', 'N/A')}")
-        output.append(f"   - Joined Date: {channel.get('Joined Date', 'N/A')}")
         output.append(f"   - Ranking Score: {channel.get('Ranking Score', 0)}")
         output.append("-" * 50)
     return "\n".join(output)
@@ -334,10 +374,10 @@ async def youtube_influencer_finder(request: InfluencerFinderRequest):
         # Process the query
         result = await process_influencer_query(input_query, chat_history, user_id)
 
-        result["updated_chat_history"].append({
-            "role": "assistant",
-            "content": f"Ranked Channels:\n{json.dumps(result['ranked_channels'], indent=2)}"
-        })        
+        # result["updated_chat_history"].append({
+        #     "role": "assistant",
+        #     "content": f"Ranked Channels:\n{json.dumps(result['ranked_channels'], indent=2)}"
+        # })        
 
         if result["database_stored"]:
             print("💾 Chat history successfully stored in database")
