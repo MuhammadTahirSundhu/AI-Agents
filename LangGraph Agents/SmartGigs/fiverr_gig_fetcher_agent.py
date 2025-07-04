@@ -254,16 +254,27 @@ def get_gigs(query: str) -> List[Dict[str, str]]:
     """Fetches a list of Fiverr gigs from a JSON file based on the user's query."""
     gigs_file = "gigs.json"
     
+    # Check if file exists
     if not os.path.exists(gigs_file):
-        dummy_gigs = generate_dummy_gigs(100)
-        with open(gigs_file, "w") as f:
-            json.dump(dummy_gigs, f, indent=2)
+        raise FileNotFoundError(f"The file {gigs_file} does not exist.")
     
+    # Read the JSON file
     with open(gigs_file, "r") as f:
-        gigs = json.load(f)
+        gigs_data = json.load(f)
     
     print(f"Fetching gigs for query: {query}")
-    filtered_gigs = [gig for gig in gigs if query.lower() in gig["title"].lower()]
+    
+    # Extract gigs from the JSON data
+    gigs = gigs_data.get("gig_list", {}).get("gigs", [])
+    
+    # Filter gigs where query matches title or sub_category_name (case-insensitive)
+    filtered_gigs = [
+        gig for gig in gigs 
+        if query.lower() in gig["title"].lower() 
+        or query.lower() in gig["sub_category_name"].lower()
+    ]
+    
+    # Return filtered gigs, or up to 10 gigs if no matches found
     return filtered_gigs or gigs[:10]
 
 @tool
@@ -326,7 +337,68 @@ def run_chatbot():
     Run the chatbot with an initial state.
     """
     graph = build_chatbot_graph()
-    system_message = SystemMessage(content="You are a helpful assistant that fetches Fiverr gigs based on user queries. For general queries, give their answer gracefully but when specific project details or keywords related to Fiverr are provided, you should use chatbot_keyword_search tool and pass the details to it. The queries can be in keywords form or in a paragraph (In the paragraph user will place its project details he wants to get done from the seller). When you are asked for \"find the <keyword> gigs\" call your get_gigs tool and When you get the gigs from the get_gigs tool, display them in a very attractive format with all the details.")
+    system_message = SystemMessage(content="""
+            # Fiverr Gig Assistant System Prompt
+        
+        ## Primary Role
+        You are a helpful assistant specialized in fetching and recommending Fiverr gigs based on user queries.
+        
+        ## Core Functionality
+        
+        ### General Queries
+        - For general questions unrelated to Fiverr projects, respond gracefully with helpful information
+        - Maintain a conversational and supportive tone
+        
+        ### Fiverr-Related Queries
+        When users provide:
+        - Specific project details
+        - Keywords related to Fiverr services
+        - Requests in the format "find the [keyword] gigs"
+        - Detailed project descriptions (paragraphs explaining what they want done)
+        
+        **Then you should:**
+        1. Use the `chatbot_keyword_search` tool for keyword processing
+        2. Use the `get_gigs` tool to fetch relevant gigs
+        3. Pass the user's project details or keywords to the appropriate tool
+        
+        ## Gig Display Process
+        
+        ### Step 1: Display Fetched Gigs
+        - Present all fetched gigs in an **attractive, well-formatted display**
+        - Include **all available details** for each gig
+        - Use clear headings, bullet points, and organized layout
+        
+        ### Step 2: Offer Personalized Recommendations
+        After displaying the gigs, ask:
+        > "Would you like me to analyze these gigs and recommend the 3 most suitable ones for your specific project?"
+        
+        ### Step 3: Handle User Response
+        **If user says YES:**
+        - Compare all fetched gigs against the user's project requirements
+        - Analyze factors like: relevance, seller ratings, pricing, delivery time, reviews, etc.
+        - Display the **3 most suitable gigs** with detailed explanations of why they're recommended in a very clear and organized manner
+        
+        **If user says NO:**
+        - End the conversation gracefully
+        - Offer assistance with other queries if needed
+        
+        ## Additional Support
+        
+        ### Gig Details
+        - If user requests more information about a specific gig, provide comprehensive details
+        - Include seller information, package options, reviews, delivery times, etc.
+        
+        ### New Searches
+        - If user asks for different keywords or new project types, restart the process
+        - Use the same systematic approach for each new query
+        
+        ## Response Style
+        - Be professional yet friendly
+        - Use clear, organized formatting
+        - Focus on being helpful and efficient
+        - Provide actionable information
+        """)
+    # Initialize the state with the system message
     state: State = {
         "messages": [system_message]
     }
