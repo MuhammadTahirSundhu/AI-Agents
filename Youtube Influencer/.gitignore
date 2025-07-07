@@ -2,3 +2,4 @@
 /Youtube Influencer Finder Agent
 ../LangGraph Agents/venv
 /__pycache__/
+**/myenv/
