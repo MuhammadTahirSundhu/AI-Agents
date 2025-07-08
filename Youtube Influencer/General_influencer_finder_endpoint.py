@@ -17,93 +17,6 @@ load_dotenv()
 
 app = FastAPI(title="Universal Social Media Influencer Finder API", version="1.0.0")
 
-# Social Media Types Mapping
-SOCIAL_MEDIA_TYPES = {
-    "instagram": "INST",
-    "facebook": "FB", 
-    "twitter": "TW",
-    "youtube": "YT",
-    "tiktok": "TT",
-    "telegram": "TG",
-    "inst": "INST",
-    "fb": "FB",
-    "tw": "TW",
-    "yt": "YT", 
-    "tt": "TT",
-    "tg": "TG",
-
-}
-
-# Common locations mapping
-LOCATION_MAPPING = {
-    "pakistan": "pakistan",
-    "india": "india", 
-    "usa": "united-states",
-    "uk": "united-kingdom",
-    "canada": "canada",
-    "australia": "australia",
-    "germany": "germany",
-    "france": "france",
-    "japan": "japan",
-    "brazil": "brazil",
-    "turkey": "turkey",
-    "saudi arabia": "saudi-arabia",
-    "uae": "uae",
-    "united states": "united-states",
-    "united kingdom": "united-kingdom",
-    "south africa": "south-africa",
-    "south korea": "south-korea",
-    "italy": "italy",
-    "spain": "spain",
-    "netherlands": "netherlands",
-    "russia": "russia",
-    "mexico": "mexico",
-    "argentina": "argentina",
-    "sweden": "sweden",
-    "norway": "norway",
-    "finland": "finland",
-    "denmark": "denmark",
-    "poland": "poland",
-    "belgium": "belgium",
-    "switzerland": "switzerland",
-    "austria": "austria",
-    "ireland": "ireland",
-    "new zealand": "new-zealand",
-    "singapore": "singapore",
-    "malaysia": "malaysia",
-    "philippines": "philippines",
-    "indonesia": "indonesia",
-    "thailand": "thailand",
-    "vietnam": "vietnam",
-    "china": "china",
-    "taiwan": "taiwan",
-}
-
-# Enhanced niche/category keywords mapping
-NICHE_KEYWORDS = {
-    "fitness": ["fitness", "gym", "workout", "training", "bodybuilding", "crossfit", "yoga", "pilates", "health"],
-    "fashion": ["fashion", "style", "clothing", "outfit", "designer", "model", "runway", "trends"],
-    "food": ["food", "cooking", "recipe", "chef", "restaurant", "cuisine", "foodie", "culinary", "baking"],
-    "travel": ["travel", "tourism", "adventure", "vacation", "destination", "wanderlust", "explore"],
-    "tech": ["technology", "tech", "gadgets", "software", "coding", "programming", "ai", "startup", "electronic", "electronics"],
-    "beauty": ["beauty", "makeup", "skincare", "cosmetics", "hair", "nails", "spa"],
-    "lifestyle": ["lifestyle", "life", "daily", "routine", "motivation", "inspiration"],
-    "gaming": ["gaming", "games", "esports", "streamer", "gamer", "console", "pc"],
-    "music": ["music", "musician", "singer", "artist", "band", "concert", "album"],
-    "sports": ["sports", "athlete", "football", "basketball", "soccer", "tennis", "cricket"],
-    "education": ["education", "teacher", "learning", "study", "academic", "school", "university"],
-    "business": ["business", "entrepreneur", "startup", "marketing", "finance", "investment"],
-    "entertainment": ["entertainment", "comedy", "funny", "humor", "celebrity", "show"],
-    "art": ["art", "artist", "painting", "drawing", "creative", "design", "gallery"],
-    "pets": ["pets", "dog", "cat", "animal", "puppy", "kitten", "pet care"],
-    "parenting": ["parenting", "family", "kids", "children", "mom", "dad", "baby"],
-    "automotive": ["car", "auto", "vehicle", "motorcycle", "racing", "automotive"],
-    "home": ["home", "interior", "decor", "renovation", "DIY", "gardening", "landscaping"],
-    "finance": ["finance", "money", "investment", "stock", "trading", "cryptocurrency", "savings"],
-    "electronics": ["electronics", "gadgets", "devices", "smartphone", "laptop", "tablet"],
-    "photography": ["photography", "photo", "camera", "videography", "videographer", "photographer", "film"]
-}
-
 # Pydantic models for request/response
 class ChatMessage(BaseModel):
     role: str
@@ -122,110 +35,165 @@ class HealthResponse(BaseModel):
     status: str
     service: str
 
-def extract_niche_from_query(user_input):
-    """Extract niche/category from user input using enhanced keyword matching."""
-    user_input_lower = user_input.lower()
+def GetThingsFromInput(input_query: str) -> list:
+    """
+    Extract niche, location, platform, and number from user input using a single LLM request.
     
-    # Direct keyword matching
-    for niche, keywords in NICHE_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword in user_input_lower:
-                return niche
+    Args:
+        input_query (str): The user's input text
     
-    # Pattern-based extraction for specific phrases
-    niche_patterns = [
-        r'(\w+)\s+influencers?',  # "fitness influencers"
-        r'(\w+)\s+bloggers?',     # "food bloggers"
-        r'(\w+)\s+content creators?',  # "tech content creators"
-        r'influencers?\s+in\s+(\w+)',  # "influencers in fitness"
-        r'(\w+)\s+creators?',     # "fashion creators"
-        r'(\w+)\s+channels?',     # "cooking channels"
-        r'(\w+)\s+accounts?',     # "travel accounts"
-    ]
+    Returns:
+        list: List containing [niche, location, platform, number]. Each element is a string,
+              empty string if not found.
+    """
+    # Combined prompt for all extraction tasks
+    combined_prompt = f"""
+    Extract the following information from this text: "{input_query}"
     
-    for pattern in niche_patterns:
-        match = re.search(pattern, user_input_lower)
-        if match:
-            potential_niche = match.group(1)
-            # Check if the extracted word is a known niche
-            if potential_niche in NICHE_KEYWORDS:
-                return potential_niche
-            # Check if it matches any keywords
-            for niche, keywords in NICHE_KEYWORDS.items():
-                if potential_niche in keywords:
-                    return niche
+    Return the results as a JSON object in the following format:
+    {{"niche": "<keyword or phrase>", "location": "<country name>", "platform": "<platform codes>", "number": "<number>"}}
     
-    return "general"  # Default fallback
+    Rules for extraction:
+    1. Niche:
+       - If the niche is explicitly specified in the query (e.g., "AI Tools", "machine learning", "digital marketing"), return the exact phrase as mentioned.
+       - If the niche is not specified or unclear, extract the most relevant niche/category, which can be a single word or multi-word phrase (e.g., fitness, food, technology, AI Tools, digital marketing, machine learning).
+       - If no clear niche is found, return "general".
+       - Return only the keyword or phrase, nothing else.
+    
+    2. Location:
+       - Extract the exact country name (e.g., united-states, united-kingdom, canada, australia, germany, france, india, etc.).
+       - If no location is mentioned, return empty string.
+    
+    3. Platform:
+       - Extract social media platforms and map to these codes:
+         - Instagram: INST
+         - Facebook: FB
+         - Twitter/X: TW
+         - YouTube: YT
+         - TikTok: TT
+         - Telegram: TG
+       - If multiple platforms are mentioned, return them comma-separated (e.g., "INST,YT,TT").
+       - If no platforms are mentioned, return empty string.
+    
+    4. Number:
+       - Extract the number of results requested (e.g., from phrases like "find 10 influencers", "get 5 creators", "show 20 people").
+       - Return only the number as a string.
+       - If no number is mentioned, return empty string.
+    
+    Return only the JSON object as a string, without any Markdown, code fences, or additional text.
+    """
+    
+    try:
+        # Initialize LangChain ChatGoogleGenerativeAI
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",  # Updated to a valid model
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            temperature=0.1,  # Low temperature for consistent results
+            max_output_tokens=200  # Increased to accommodate JSON response
+        )
+        
+        # Initialize result list [niche, location, platform, number]
+        results = ["", "", "", ""]
+        
+        # Get response from LLM
+        response = llm.invoke(combined_prompt)
+        result = response.content.strip()
+        
+        # Debug: Print raw LLM response
+        print(f"Raw LLM response: {result}")
+        
+        # Check if response is empty
+        if not result:
+            print("Error: LLM response is empty")
+            return results
+        
+        # Strip Markdown code fences if present
+        cleaned_result = result
+        if result.startswith("```json"):
+            cleaned_result = result.replace("```json", "").replace("```", "").strip()
+        
+        # Parse JSON response
+        try:
+            parsed_result = json.loads(cleaned_result)
+        except json.JSONDecodeError as e:
+            print(f"Error parsing LLM response as JSON: {str(e)}")
+            print(f"Cleaned response: {cleaned_result}")
+            return results
+        
+        # Post-process the results
+        # Niche
+        niche = parsed_result.get('niche', '')
+        if niche:
+            results[0] = niche.lower()  # Preserve multi-word phrases
+        
+        # Location
+        results[1] = parsed_result.get('location', '')
+        
+        # Platform
+        platform = parsed_result.get('platform', '')
+        if platform:
+            valid_codes = {'INST', 'FB', 'TW', 'YT', 'TT', 'TG'}
+            codes = [code.strip() for code in platform.split(',') if code.strip()]
+            valid_codes_found = [code for code in codes if code in valid_codes]
+            results[2] = ','.join(valid_codes_found) if valid_codes_found else ""
+        
+        # Number
+        number = parsed_result.get('number', '')
+        if number.isdigit():
+            results[3] = number
+        
+        return results
+        
+    except Exception as e:
+        print(f"Error extracting information: {str(e)}")
+        return ["", "", "", ""]
 
-def extract_social_media_platforms(user_input):
-    """Extract social media platforms from user input."""
-    user_input_lower = user_input.lower()
-    platforms = []
+def should_fetch_influencers(user_input: str, chat_history: List[Dict]) -> bool:
+    """Use LLM to determine if we should fetch new influencer data."""
+    # Prepare chat history context
+    chat_context = ""
+    if chat_history:
+        recent_messages = chat_history[-3:]
+        chat_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in recent_messages])
     
-    for platform, code in SOCIAL_MEDIA_TYPES.items():
-        if platform in user_input_lower:
-            if code not in platforms:
-                platforms.append(code)
-    
-    return ",".join(platforms) if platforms else "INST,FB,TW,YT,TT,TG" # Default to all platforms
+    prompt = f"""
+    Analyze the user input and chat history to determine if new influencer data should be fetched.
 
-def extract_location(user_input):
-    """Extract location from user input."""
-    user_input_lower = user_input.lower()
+    User Input: "{user_input}"
     
-    for location, mapped_location in LOCATION_MAPPING.items():
-        if location in user_input_lower:
-            return mapped_location
+    Recent Chat History:
+    {chat_context if chat_context else "No previous chat history"}
     
-    return None
-
-def extract_number_of_results(user_input):
-    """Extract the number of results requested from user input."""
-    # Look for patterns like "find 10 influencers", "get 5 creators", etc.
-    patterns = [
-        r'find (\d+)',
-        r'get (\d+)',
-        r'show (\d+)',
-        r'(\d+) influencers?',
-        r'(\d+) creators?',
-        r'(\d+) bloggers?'
-    ]
+    Rules:
+    1. Return "fetch" if the user is asking to find, search, discover, or get new influencers
+    2. Return "fetch" if the user is asking for specific types of influencers not in chat history
+    3. Return "fetch" if the user wants different criteria (platform, location, niche) than what's in chat history
+    4. Return "not fetch" if the user is asking questions about already provided influencer data
+    5. Return "not fetch" if the user is asking questions about already provided influencer data
+    6. Return "not fetch" if the user is asking for analysis, ranking, or insights on existing data
+    7. Return "not fetch" for general questions about social media or marketing
     
-    for pattern in patterns:
-        match = re.search(pattern, user_input.lower())
-        if match:
-            return int(match.group(1))
+    Respond with ONLY "fetch" or "not fetch" - nothing else.
+    """
     
-    return 10  # Default
-
-def should_fetch_influencers(user_input, chat_history):
-    """Determine if we should fetch influencers based on user input and chat history."""
-    # Keywords that indicate user wants to find influencers
-    fetch_keywords = [
-        "find", "search", "get", "show", "looking for", "need", "want", 
-        "give me", "fetch", "collect", "source", "discover",
-        "top", "best", "popular", "influencers", "influencers",
-        "influencer", "blogger", "creator", "content creator", "youtuber"
-    ]
-    
-    user_input_lower = user_input.lower()
-    
-    # Check if user input contains fetch keywords
-    for keyword in fetch_keywords:
-        if keyword in user_input_lower:
-            return True
-    
-    # Check if chat history is empty or doesn't contain influencer data
-    if not chat_history:
+    try:
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            temperature=0.1,
+            max_output_tokens=10
+        )
+        
+        response = llm.invoke(prompt)
+        decision = response.content.strip().lower()
+        
+        # Return True if LLM says "fetch", False otherwise
+        return decision == "fetch"
+        
+    except Exception as e:
+        print(f"Error in LLM decision making: {str(e)}")
+        # Fallback to safe default - fetch if unsure
         return True
-    
-    # Check if recent chat history contains influencer data
-    recent_messages = chat_history[-5:]  # Check last 5 messages
-    for msg in recent_messages:
-        if "influencer" in msg.get("content", "").lower():
-            return False  # Already have influencer data
-    
-    return True
 
 def convert_dict_to_langchain_messages(chat_history_dict):
     """Convert dictionary format chat history to LangChain message objects."""
@@ -266,24 +234,6 @@ def call_llm(prompt, chat_history):
         return response.content
     except Exception as e:
         return f"Error: Failed to connect to Google Gemini - {str(e)}"
-
-def validate_social_types(social_types: str) -> str:
-    """Validate and normalize social media types."""
-    if not social_types:
-        return "INST,FB,TW,YT,TT,TG"  # Default to all platforms
-    valid_types = {"INST", "FB", "TW", "YT", "TT", "TG"}
-    types = [t.strip().upper() for t in social_types.split(",") if t.strip()]
-    validated_types = [t for t in types if t in valid_types]
-    if not validated_types:
-        raise ValueError("No valid social media types provided")
-    return ",".join(validated_types)
-
-def validate_location(location: Optional[str]) -> Optional[str]:
-    """Validate and normalize location."""
-    if not location:
-        return None
-    location = location.lower()
-    return LOCATION_MAPPING.get(location, None)
 
 def fetch_social_media_influencers(
     query: str,
@@ -533,21 +483,18 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
         print("Determining if we should fetch new influencer data...")
         
         # Extract parameters from user query
-        niche = extract_niche_from_query(input_query)
-        location = extract_location(input_query)
-        social_platforms = extract_social_media_platforms(input_query)
-        num_results = extract_number_of_results(input_query)
-        
+        niche, location, social_platforms, num_results = GetThingsFromInput(input_query)
+
         print(f"Extracted parameters - Niche: {niche}, Location: {location}, Platforms: {social_platforms}, Results: {num_results}")
         
         # Fetch influencers immediately if we have extracted parameters
         if niche and niche != "general":
             try:
-                print(f"Fetching influencers for niche: {niche}")
+                print(f"Fetching influencers for niche: {niche}, location: {location}, platforms: {social_platforms}, results: {num_results}")
                 api_result = fetch_social_media_influencers(
                     query=niche,
                     page=1,
-                    per_page=min(num_results, 50),
+                    per_page=min(int(num_results) if num_results.isdigit() else 10, 50),
                     sort="-score",
                     location=location,
                     social_types=social_platforms
@@ -566,19 +513,25 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
                     for influencer in api_result["data"]:
                         # Safe conversion functions
                         def safe_float(value, default=0.0):
-                            if value is None:
+                            if value is None or value == "":
                                 return default
                             try:
+                                if isinstance(value, str):
+                                    value = value.replace("%", "").strip()
                                 return float(value)
                             except (ValueError, TypeError):
+                                print(f"Warning: Could not convert {value} to float, using default {default}")
                                 return default
                         
                         def safe_int(value, default=0):
-                            if value is None:
+                            if value is None or value == "":
                                 return default
                             try:
-                                return int(value)
+                                if isinstance(value, str):
+                                    value = value.strip()
+                                return int(float(value))
                             except (ValueError, TypeError):
+                                print(f"Warning: Could not convert {value} to int, using default {default}")
                                 return default
                         
                         # Extract values with null safety
@@ -587,16 +540,26 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
                         avg_interactions = safe_int(influencer.get("avgInteractions"))
                         quality_score = safe_float(influencer.get("qualityScore"))
                         
-                        # Calculate ranking score with null safety
+                        # # Debug: Log influencer data
+                        # print(f"Processing influencer: {influencer.get('name', 'Unknown')}, "
+                        #       f"followers={followers}, engagement_rate={engagement_rate}, "
+                        #       f"avg_interactions={avg_interactions}, quality_score={quality_score}")
+                        
+                        # Calculate niche match
                         niche_match = 1 if (niche.lower() in str(influencer.get("name", "")).lower() or 
                                           niche.lower() in str(influencer.get("screenName", "")).lower()) else 0.5
                         
-                        ranking_score = (
-                            0.35 * niche_match +
-                            0.30 * min(engagement_rate / 100, 1) +
-                            0.20 * min(followers / 1000000, 1) +
-                            0.15 * quality_score
-                        ) * 100
+                        # Calculate ranking score
+                        try:
+                            ranking_score = (
+                                0.35 * niche_match +
+                                0.30 * min(engagement_rate / 100, 1) +
+                                0.20 * min(followers / 1000000, 1) +
+                                0.15 * quality_score
+                            ) * 100
+                        except (TypeError, ValueError) as e:
+                            print(f"Error calculating ranking score for {influencer.get('name', 'Unknown')}: {str(e)}")
+                            continue
                         
                         ranked_influencers.append({
                             "Influencer Name": influencer.get("name", "Unknown"),
@@ -609,12 +572,18 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
                             "Verified": bool(influencer.get("verified", False)),
                             "Location": ", ".join([city.get("name", "Unknown") for city in influencer.get("membersCities", [])]) or "N/A",
                             "Profile URL": influencer.get("url", "N/A"),
-                            "Ranking Score": ranking_score
+                            "Ranking Score": float(ranking_score)
                         })
                     
                     # Sort by ranking score
-                    ranked_influencers.sort(key=lambda x: x["Ranking Score"], reverse=True)
-                    
+                    try:
+                        ranked_influencers.sort(key=lambda x: x["Ranking Score"], reverse=True)
+                    except TypeError as e:
+                        print(f"Error sorting influencers: {str(e)}")
+                        for influencer in ranked_influencers:
+                            print(f"Influencer: {influencer['Influencer Name']}, Ranking Score: {influencer['Ranking Score']}, Type: {type(influencer['Ranking Score'])}")
+                        raise
+                
                 else:
                     error_msg = api_result.get("error", "No influencer data returned by API")
                     chat_history.append(AIMessage(content=f"I tried to fetch {niche} influencers but encountered an issue: {error_msg}"))
@@ -622,7 +591,7 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
             except Exception as e:
                 error_msg = f"Error fetching social media influencer data: {str(e)}"
                 chat_history.append(AIMessage(content=error_msg))
-                print(f"Debug info: {error_msg}")  # For debugging
+                print(f"Debug info: {error_msg}")
                 
     # If we don't have fresh data, use LLM to process the query
     if not fetch_attempted:
