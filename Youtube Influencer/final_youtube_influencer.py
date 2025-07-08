@@ -1,8 +1,8 @@
-
 import json
 import os
 import re
-from typing import List
+from typing import List, Dict, Any
+import asyncio
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from openai import OpenAI
@@ -14,9 +14,13 @@ import json
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain.prompts import PromptTemplate
-from youtube_apis import read_and_parse_json , fetch_channel_with_their_avg_comments , parse_json_to_context_string
+from final_youtube_api import read_and_parse_json , fetch_channel_with_their_avg_comments , parse_json_to_context_string
 from notion_database import create_chat_history, get_chat_history_for_user
 
+# Load environment variables
+load_dotenv()
+
+# Initialize FastAPI app
 app = FastAPI(
     title="Universal Social Media Influencer Finder API",
     description="Advanced AI-powered influencer discovery and analysis across YouTube and Instagram",
@@ -24,7 +28,6 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
 
 # Pydantic models for request/response
 class ChatMessage(BaseModel):
@@ -39,11 +42,18 @@ class InfluencerFinderRequest(BaseModel):
 class InfluencerFinderResponse(BaseModel):
     chat_history: List[ChatMessage]
     response: str
+    fetch_attempted: bool = False
+    ranked_channels: List[Dict[str, Any]] = []
+    platform_analyzed: str = "both"
+    database_stored: bool = False
 
 class HealthResponse(BaseModel):
     status: str
     service: str
+    supported_platforms: List[str]
+    version: str
 
+# Your existing utility functions
 def convert_dict_to_langchain_messages(chat_history_dict):
     """Convert dictionary format chat history to LangChain message objects."""
     messages = []
@@ -62,8 +72,6 @@ def convert_langchain_to_dict(chat_history):
 
 def call_llm(prompt, chat_history):
     """Call the OpenAI API with GPT-4o model for multi-platform influencer sourcing."""
-    from openai import OpenAI
-    
     prompt_text = prompt.text if hasattr(prompt, 'text') else str(prompt)
     
     role_mapping = {
@@ -133,17 +141,7 @@ def call_common_llm(messages: List[dict]) -> str:
         return ""
 
 def GetThingsFromInput(input_query: str) -> list:
-    """
-    Extract niche, country, max_results, and platform from user input using a single LLM request.
-    
-    Args:
-        input_query (str): The user's input text
-    
-    Returns:
-        list: List containing [niche, country, max_results, platform]. Each element is a string,
-              empty string if not found.
-    """
-    # Combined prompt for all extraction tasks
+    """Extract niche, country, max_results, and platform from user input using a single LLM request."""
     combined_prompt = f"""
     Extract the following information from this text: "{input_query}"
     
@@ -205,31 +203,20 @@ def GetThingsFromInput(input_query: str) -> list:
     """
     
     try:
-        # Initialize result list [niche, country, max_results, platform]
         results = ["", "", "", ""]
-        
-        # Prepare messages for OpenAI API
-        messages = [
-            {"role": "user", "content": combined_prompt}
-        ]
-        
-        # Get response from LLM
+        messages = [{"role": "user", "content": combined_prompt}]
         result = call_common_llm(messages).strip()
         
-        # Debug: Print raw LLM response
         print(f"Raw LLM response: {result}")
         
-        # Check if response is empty
         if not result:
             print("Error: LLM response is empty")
             return results
         
-        # Strip Markdown code fences if present
         cleaned_result = result
         if result.startswith("```json"):
             cleaned_result = result.replace("```json", "").replace("```", "").strip()
         
-        # Parse JSON response
         try:
             parsed_result = json.loads(cleaned_result)
         except json.JSONDecodeError as e:
@@ -238,20 +225,16 @@ def GetThingsFromInput(input_query: str) -> list:
             return results
         
         # Post-process the results
-        # Niche
         niche = parsed_result.get('niche', '')
         if niche:
-            results[0] = niche.lower()  # Preserve multi-word phrases
+            results[0] = niche.lower()
         
-        # Country
         results[1] = parsed_result.get('country', '')
         
-        # Max_results
         max_results = parsed_result.get('max_results', '')
         if max_results.isdigit():
             results[2] = max_results
         
-        # Platform
         platform = parsed_result.get('platform', '').lower()
         if platform in ['youtube', 'instagram', 'both']:
             results[3] = platform
@@ -261,7 +244,7 @@ def GetThingsFromInput(input_query: str) -> list:
     except Exception as e:
         print(f"Error extracting information: {str(e)}")
         return ["", "", "", ""]
-    
+
 def extract_json_response_to_list(input_text):
     """Extract JSON data from input text and store it in a list."""
     try:
@@ -335,188 +318,6 @@ def create_prompt_template():
            - Offer to analyze influencer data if available
            - Suggest next steps for getting started with influencer analysis
         
-        4. **Priority Check for Analysis**: ALWAYS examine Chat History for influencer data
-        5. **Data Availability Responses**:
-           - If Chat History contains influencer data → Proceed to immediate analysis and ranking
-           - If Chat History is empty → Offer to analyze data once it becomes available
-        
-        6. **Analysis Process**:
-           - Extract all available metrics from each influencer profile
-           - Calculate ranking scores using the weighted algorithm
-           - Sort results by score (highest to lowest)
-           - Generate comprehensive JSON output with all details
-        
-        4. **Quality Assurance**:
-           - Verify all data points are from Chat History
-           - Ensure no fabricated or assumed information
-           - Maintain data integrity throughout analysis
-        
-        5. **Platform-Specific Insights**:
-           - **YouTube**: Focus on watch time, subscriber growth, video consistency, comment engagement
-           - **Instagram**: Emphasize visual content quality, story engagement, reel performance, hashtag effectiveness
-        
-        **COMPREHENSIVE ANALYSIS OUTPUT**:
-        When analyzing influencer data, provide detailed JSON-formatted results:
-        
-        Store_in_Analysis_Database
-        ```json
-        [
-          {{
-            "influencer_id": "actual_id_from_chat_history",
-            "platform": "platform_from_chat_history",
-            "ranking_position": position_number,
-            "overall_score": calculated_score_0_to_100,
-            
-            "profile_analysis": {{
-              "channel_name": "actual_channel_name",
-              "handle": "actual_handle",
-              "description": "actual_description",
-              "profile_image_url": "actual_profile_image",
-              "verification_status": "actual_verification_status",
-              "account_age": "actual_account_age_if_available"
-            }},
-            
-            "performance_metrics": {{
-              "subscribers_followers": actual_number,
-              "total_content_views": actual_number,
-              "content_count": actual_number,
-              "engagement_rate_percentage": actual_percentage,
-              "average_likes": actual_number,
-              "average_comments": actual_number,
-              "average_views_per_content": actual_number,
-              "growth_trend": "actual_growth_data_if_available"
-            }},
-            
-            "content_strategy": {{
-              "primary_niche": "actual_primary_niche",
-              "content_categories": ["actual_categories_from_data"],
-              "content_format": "actual_content_format",
-              "posting_frequency": "actual_posting_frequency",
-              "language_primary": "actual_language",
-              "content_quality_score": calculated_quality_score
-            }},
-            
-            "recent_content_analysis": [
-              {{
-                "content_title": "actual_content_title",
-                "performance_views": actual_views,
-                "engagement_likes": actual_likes,
-                "engagement_comments": actual_comments,
-                "publish_date": "actual_publish_date",
-                "content_type": "actual_content_type"
-              }}
-            ],
-            
-            "geographic_data": {{
-              "primary_country": "actual_country",
-              "primary_city": "actual_city_if_available",
-              "timezone": "actual_timezone_if_available",
-              "target_regions": "actual_target_regions_if_available"
-            }},
-            
-            "social_presence": {{
-              "primary_platform_url": "actual_platform_url",
-              "youtube_channel": "actual_youtube_url_if_available",
-              "instagram_profile": "actual_instagram_url_if_available",
-              "personal_website": "actual_website_if_available",
-              "other_platforms": "actual_other_platforms_if_available"
-            }},
-            
-            "audience_intelligence": {{
-              "top_audience_comments": [
-                {{
-                  "comment_text": "actual_comment_text",
-                  "comment_likes": actual_likes,
-                  "commenter_handle": "actual_commenter_handle"
-                }}
-              ],
-              "engagement_patterns": "actual_engagement_patterns",
-              "audience_demographics": "actual_demographics_if_available",
-              "community_sentiment": "calculated_sentiment_analysis"
-            }},
-            
-            "collaboration_potential": {{
-              "brand_partnership_history": "actual_brand_partnerships",
-              "collaboration_rate_estimate": "actual_collaboration_rate",
-              "business_contact": "actual_contact_email_if_available",
-              "media_kit_availability": "actual_media_kit_url_if_available",
-              "campaign_suitability_score": calculated_suitability_score
-            }},
-            
-            "competitive_analysis": {{
-              "niche_relevance_score": calculated_niche_score,
-              "engagement_quality_score": calculated_engagement_score,
-              "popularity_score": calculated_popularity_score,
-              "unique_value_proposition": "identified_unique_aspects",
-              "campaign_fit_assessment": "calculated_campaign_fit"
-            }},
-            
-            "platform_specific_insights": {{
-              "youtube_specific": {{
-                "watch_time_metrics": "actual_watch_time_if_available",
-                "subscriber_growth_rate": "actual_growth_rate_if_available",
-                "video_consistency": "calculated_consistency_score"
-              }},
-              "instagram_specific": {{
-                "story_engagement": "actual_story_metrics_if_available",
-                "reel_performance": "actual_reel_metrics_if_available",
-                "hashtag_effectiveness": "calculated_hashtag_score"
-              }}
-            }},
-            
-            "recommendations": {{
-              "campaign_strategy": "tailored_campaign_recommendations",
-              "content_collaboration_ideas": "specific_content_suggestions",
-              "budget_tier_suggestion": "estimated_budget_tier",
-              "best_collaboration_format": "recommended_collaboration_type"
-            }},
-            
-            "data_freshness": {{
-              "last_updated": "actual_last_updated_date",
-              "data_collection_timestamp": "actual_timestamp",
-              "analysis_performed_at": "current_analysis_timestamp"
-            }}
-          }}
-        ]
-        ```
-        
-        **ANALYSIS COMPLETION**:
-        - End every successful analysis with "Analysis Complete"
-        - Include summary statistics (total analyzed, top performer, average scores)
-        - Provide actionable insights for campaign planning
-        
-        **PLATFORM-SPECIFIC CONSIDERATIONS**:
-        - **YouTube**: Prioritize subscriber retention, video completion rates, comment engagement depth
-        - **Instagram**: Focus on visual content quality, story completion rates, reel virality potential
-        - **Cross-Platform**: Identify opportunities for integrated campaigns and content repurposing
-        
-        **RESPONSE GUIDELINES**:
-        
-        **For General Queries**:
-        1. Provide helpful, concise answers to general questions
-        2. Naturally connect responses to influencer marketing context
-        3. Demonstrate agent capabilities through relevant examples
-        4. Guide users toward discovering core functionalities
-        5. Maintain conversational, professional tone
-        
-        **For Analysis Queries**:
-        1. Always specify which platform(s) are being analyzed
-        2. Provide clear ranking explanations with score breakdowns
-        3. Include actionable recommendations for each ranked influencer
-        4. Highlight standout performers and explain why they scored highest
-        5. Suggest optimal collaboration approaches based on data insights
-        6. Maintain professional, analytical tone throughout
-        
-        **Transition Examples**:
-        - Marketing Strategy Question → "That's a great marketing approach! For influencer campaigns specifically, I can analyze YouTube and Instagram creators to find the perfect match for your brand. Would you like me to analyze any influencer data you have?"
-        - Social Media Question → "Absolutely! Speaking of social media success, I specialize in analyzing influencer performance across YouTube and Instagram. I can help you identify top-performing creators in any niche."
-        - Business Question → "That's an important business consideration. In influencer marketing, I can help you make data-driven decisions by analyzing creator metrics, engagement rates, and audience fit. Have you considered working with influencers for your campaign?"
-        
-        **ERROR HANDLING**:
-        - If Chat History contains incomplete data, work with available information and note limitations
-        - If data appears corrupted or inconsistent, flag issues and provide best possible analysis
-        - Never assume or interpolate missing data points
-        
         **Chat History Data**: {ChatHistory}
         **User Query**: {Query}
         
@@ -535,7 +336,6 @@ def create_prompt_template():
 
 def should_fetch_influencers(user_input: str, chat_history: List[Dict]) -> bool:
     """Use LLM to determine if we should fetch new influencer data."""
-    # Prepare chat history context
     chat_context = ""
     if chat_history:
         recent_messages = chat_history[-3:]
@@ -554,9 +354,8 @@ def should_fetch_influencers(user_input: str, chat_history: List[Dict]) -> bool:
     2. Return "fetch" if the user is asking for specific types of influencers not in chat history
     3. Return "fetch" if the user wants different criteria (platform, location, niche) than what's in chat history
     4. Return "not fetch" if the user is asking questions about already provided influencer data
-    5. Return "not fetch" if the user is asking questions about already provided influencer data
-    6. Return "not fetch" if the user is asking for analysis, ranking, or insights on existing data
-    7. Return "not fetch" for general questions about social media or marketing
+    5. Return "not fetch" if the user is asking for analysis, ranking, or insights on existing data
+    6. Return "not fetch" for general questions about social media or marketing
     
     Respond with ONLY "fetch" or "not fetch" - nothing else.
     """
@@ -572,21 +371,18 @@ def should_fetch_influencers(user_input: str, chat_history: List[Dict]) -> bool:
         response = llm.invoke(prompt)
         decision = response.content.strip().lower()
         
-        # Return True if LLM says "fetch", False otherwise
         return decision == "fetch"
         
     except Exception as e:
         print(f"Error in LLM decision making: {str(e)}")
-        # Fallback to safe default - fetch if unsure
         return True
-    
+
 async def process_influencer_query(input_query, chat_history_dict, user_id):
     """Process a single influencer query with improved logging and multi-platform support."""
     
     # Check for exit command
     exit_commands = ["exit", "quit", "end"]
     if input_query.lower().strip() in exit_commands:
-        # Store chat history in Notion
         chat_history = convert_dict_to_langchain_messages(chat_history_dict)
         try:
             chat_history_id = await create_chat_history(
@@ -606,7 +402,8 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
             "response": "Session ended. Chat history saved.",
             "database_stored": database_stored,
             "fetch_attempted": False,
-            "ranked_channels": []
+            "ranked_channels": [],
+            "platform_analyzed": "both"
         }
 
     # Normal query processing
@@ -626,6 +423,7 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
     chat_history.append(AIMessage(content=response))
     ranked_channels = []
     fetch_attempted = False
+    platform = "both"
 
     # Extract ranked channels from JSON response
     if "```json" in response or "Store_in_Analysis_Database" in response:
@@ -633,10 +431,9 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
         print("Extracted Ranked Channels:", ranked_channels)
 
     # Check if we need to fetch new influencer data
-    # This logic would need to be enhanced based on your specific fetch trigger patterns
-    should_fetch_influencers = should_fetch_influencers(input_query, chat_history)
+    should_fetch = should_fetch_influencers(input_query, chat_history_dict)
 
-    if should_fetch_influencers:
+    if should_fetch:
         try:
             # Extract parameters using the improved GetThingsFromInput function
             niche, country, max_results, platform = GetThingsFromInput(input_query)
@@ -695,41 +492,6 @@ async def process_influencer_query(input_query, chat_history_dict, user_id):
             chat_history.append(AIMessage(content=error_msg))
             print(f"Fetch error: {str(e)}")
 
-def format_ranked_influencers(ranked_influencers):
-    """Format ranked social media influencers into a human-readable string."""
-    if not ranked_influencers:
-        return "No ranked influencers available."
-    
-    # Group by platform for better organization
-    platform_groups = {}
-    for influencer in ranked_influencers:
-        platform = influencer.get('Platform', 'Unknown')
-        if platform not in platform_groups:
-            platform_groups[platform] = []
-        platform_groups[platform].append(influencer)
-    
-    output = ["🌟 Ranked Social Media Influencers:", "=" * 80]
-    
-    for platform, influencers in platform_groups.items():
-        output.append(f"\n📱 {platform} Influencers:")
-        output.append("-" * 60)
-        
-        for i, influencer in enumerate(influencers, 1):
-            output.append(f"{i}. {influencer.get('Influencer Name', 'Unknown Influencer')}")
-            output.append(f"   - Handle: {influencer.get('Handle', 'N/A')}")
-            output.append(f"   - Platform: {influencer.get('Platform', 'N/A')}")
-            output.append(f"   - Followers: {influencer.get('Followers', 0):,}")
-            output.append(f"   - Engagement Rate: {influencer.get('Engagement Rate', 0):.4f}%")
-            output.append(f"   - Average Interactions: {influencer.get('Average Interactions', 0):,}")
-            output.append(f"   - Quality Score: {influencer.get('Quality Score', 0):.4f}")
-            output.append(f"   - Verified: {influencer.get('Verified', False)}")
-            output.append(f"   - Location: {influencer.get('Location', 'N/A')}")
-            output.append(f"   - Profile URL: {influencer.get('Profile URL', 'N/A')}")
-            output.append(f"   - Ranking Score: {influencer.get('Ranking Score', 0):.2f}")
-            output.append("-" * 60)
-    
-    return "\n".join(output)
-
     # Prepare final response
     updated_chat_history = convert_langchain_to_dict(chat_history)
     final_response = chat_history[-1].content if chat_history else response
@@ -737,43 +499,183 @@ def format_ranked_influencers(ranked_influencers):
     return {
         "updated_chat_history": updated_chat_history,
         "response": final_response,
-        "database_stored": False,  # No storage until exit
+        "database_stored": False,
         "fetch_attempted": fetch_attempted,
         "ranked_channels": ranked_channels,
-        "platform_analyzed": platform if 'platform' in locals() else "both"
+        "platform_analyzed": platform
     }
 
-def main():
-    """Test the functionality"""
-    print("🧪 Testing YouTube Influencer Finder...")
-
-    input_query = input("Enter your query: ")
-    # Extract niche, country, and max_results from input
-    niche, country, max_results = GetThingsFromInput(input_query)
-    print(f"Extracted Niche: {niche}, Country: {country}, Max Results: {max_results}")
-    # result = None
-    # if country is None or country == "":
-    #     country = "US"
-    # if niche == "general":
-    #     print("Please specify your input query with like niche, country, and max results.")
-    # else:
-    #     # Validate max_results
-    #     if not max_results.isdigit() or int(max_results) <= 0:
-    #         max_results = "2"  # Default to 2 if invalid
-    #     if niche == "trending":
-    #         print("Fetching trending channels...")
-    #         # Test method 1 (trending)
-    #         result = fetch_channel_with_their_avg_comments(1, int(max_results), country=country)
-    #     elif niche:
-    #         print(f"Fetching channels in niche: {niche}...")
-    #         # Test method 2 (niche-based)
-    #         result = fetch_channel_with_their_avg_comments(2, int(max_results), niche=niche, country=country)
+# API Endpoints
+@app.post('/Social_Media_Influencer_Finder', response_model=InfluencerFinderResponse)
+async def social_media_influencer_finder(request: InfluencerFinderRequest):
+    """
+    Main endpoint for Universal Social Media Influencer Finder chatbot.
     
-    # Parse and display results
-    context = read_and_parse_json("./channel_comments.json")
-    if context:
-        print("\n📋 Parsed Context:")
-        print(context)
+    Features:
+    - Multi-platform support (YouTube, Instagram)
+    - AI-powered influencer discovery and ranking
+    - Comprehensive performance analytics
+    - Campaign strategy recommendations
+    - Real-time data fetching and analysis
+    """
+    try:
+        input_query = request.input_query
+        chat_history = [msg.dict() for msg in request.ChatHistory]
+        user_id = request.user_id
 
-if __name__ == "__main__":
-    main()
+        # Load existing chat history if not provided
+        if not chat_history:
+            try:
+                result = await get_chat_history_for_user(user_id)
+                if result != "No chat history found.":
+                    chat_history = result
+            except Exception as e:
+                print(f"Error loading chat history: {str(e)}")
+                chat_history = []
+        
+        print("Chat History:", chat_history)
+        
+        if not input_query:
+            raise HTTPException(status_code=400, detail="input_query is required")
+        
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+                
+        # Process the query
+        result = await process_influencer_query(input_query, chat_history, user_id)
+
+        if result["database_stored"]:
+            print("💾 Chat history successfully stored in database")
+        
+        if result["fetch_attempted"]:
+            print("🔍 Data fetch was attempted")
+
+        if result["ranked_channels"]:
+            print("📊 Ranked Channels:", json.dumps(result["ranked_channels"], indent=2))
+        
+        return InfluencerFinderResponse(
+            chat_history=[ChatMessage(**msg) for msg in result["updated_chat_history"]],
+            response=result["response"],
+            fetch_attempted=result["fetch_attempted"],
+            ranked_channels=result["ranked_channels"],
+            platform_analyzed=result["platform_analyzed"],
+            database_stored=result["database_stored"]
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get('/health', response_model=HealthResponse)
+async def health_check():
+    """
+    Health check endpoint to verify API status and capabilities.
+    """
+    return HealthResponse(
+        status="healthy",
+        service="Universal Social Media Influencer Finder",
+        supported_platforms=["YouTube", "Instagram", "Cross-Platform Analysis"],
+        version="1.0.0"
+    )
+
+@app.get('/platforms')
+async def get_supported_platforms():
+    """
+    Get detailed information about supported platforms and their capabilities.
+    """
+    return {
+        "supported_platforms": {
+            "youtube": {
+                "capabilities": [
+                    "Channel analytics",
+                    "Subscriber metrics",
+                    "Video performance tracking",
+                    "Audience engagement analysis",
+                    "Comment sentiment analysis",
+                    "Trending content discovery"
+                ],
+                "best_for": [
+                    "Long-form content campaigns",
+                    "Educational content",
+                    "Product demonstrations",
+                    "Tutorial-based marketing"
+                ]
+            },
+            "instagram": {
+                "capabilities": [
+                    "Profile analytics",
+                    "Follower engagement metrics",
+                    "Post performance tracking",
+                    "Story analytics",
+                    "Reel performance analysis",
+                    "Hashtag effectiveness"
+                ],
+                "best_for": [
+                    "Visual content campaigns",
+                    "Lifestyle marketing",
+                    "Fashion and beauty",
+                    "Food and travel content"
+                ]
+            },
+            "cross_platform": {
+                "capabilities": [
+                    "Unified analytics dashboard",
+                    "Cross-platform performance comparison",
+                    "Integrated campaign strategies",
+                    "Multi-platform audience insights"
+                ],
+                "best_for": [
+                    "Maximum reach campaigns",
+                    "Diverse content formats",
+                    "Comprehensive brand awareness",
+                    "Multi-touchpoint marketing"
+                ]
+            }
+        }
+    }
+
+@app.get('/user/{user_id}/history')
+async def get_user_chat_history(user_id: str):
+    """
+    Retrieve chat history for a specific user.
+    """
+    try:
+        result = await get_chat_history_for_user(user_id)
+        if result == "No chat history found.":
+            return {"message": "No chat history found for this user", "chat_history": []}
+        return {"message": "Chat history retrieved successfully", "chat_history": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving chat history: {str(e)}")
+
+# Main application runner
+if __name__ == '__main__':
+    import uvicorn
+    print("🚀 Universal Social Media Influencer Finder API Started!")
+    print("=" * 80)
+    print("📋 Available endpoints:")
+    print("  - POST /Social_Media_Influencer_Finder  (Main influencer finder)")
+    print("  - GET  /health                          (Health check)")
+    print("  - GET  /platforms                       (Platform capabilities)")
+    print("  - GET  /user/{user_id}/history          (User chat history)")
+    print("  - GET  /docs                            (API documentation)")
+    print("  - GET  /redoc                           (Alternative documentation)")
+    print("=" * 80)
+    print("🌐 Supported Platforms:")
+    print("  ✅ YouTube    - Channel analytics, subscriber metrics, video performance")
+    print("  ✅ Instagram  - Profile analytics, engagement metrics, story/reel tracking")
+    print("  ✅ Cross-Platform - Unified analysis and campaign strategies")
+    print("=" * 80)
+    print("🔧 Features:")
+    print("  • AI-powered influencer discovery and ranking")
+    print("  • Multi-platform performance analytics")
+    print("  • Campaign strategy recommendations")
+    print("  • Real-time data fetching and analysis")
+    print("  • Comprehensive audience insights")
+    print("  • Chat history persistence")
+    print("=" * 80)
+    
+    # Use dynamic module name
+    module_name = __file__.split('\\')[-1].split('.')[0] if '\\' in __file__ else __file__.split('/')[-1].split('.')[0]
+    uvicorn.run(f"{module_name}:app", host="0.0.0.0", port=5000, reload=True)
