@@ -30,15 +30,16 @@ SOCIAL_MEDIA_TYPES = {
     "tw": "TW",
     "yt": "YT", 
     "tt": "TT",
-    "tg": "TG"
+    "tg": "TG",
+
 }
 
 # Common locations mapping
 LOCATION_MAPPING = {
     "pakistan": "pakistan",
     "india": "india", 
-    "usa": "usa",
-    "uk": "uk",
+    "usa": "united-states",
+    "uk": "united-kingdom",
     "canada": "canada",
     "australia": "australia",
     "germany": "germany",
@@ -46,10 +47,36 @@ LOCATION_MAPPING = {
     "japan": "japan",
     "brazil": "brazil",
     "turkey": "turkey",
-    "saudi arabia": "saudi arabia",
+    "saudi arabia": "saudi-arabia",
     "uae": "uae",
-    "united states": "usa",
-    "united kingdom": "uk"
+    "united states": "united-states",
+    "united kingdom": "united-kingdom",
+    "south africa": "south-africa",
+    "south korea": "south-korea",
+    "italy": "italy",
+    "spain": "spain",
+    "netherlands": "netherlands",
+    "russia": "russia",
+    "mexico": "mexico",
+    "argentina": "argentina",
+    "sweden": "sweden",
+    "norway": "norway",
+    "finland": "finland",
+    "denmark": "denmark",
+    "poland": "poland",
+    "belgium": "belgium",
+    "switzerland": "switzerland",
+    "austria": "austria",
+    "ireland": "ireland",
+    "new zealand": "new-zealand",
+    "singapore": "singapore",
+    "malaysia": "malaysia",
+    "philippines": "philippines",
+    "indonesia": "indonesia",
+    "thailand": "thailand",
+    "vietnam": "vietnam",
+    "china": "china",
+    "taiwan": "taiwan",
 }
 
 # Enhanced niche/category keywords mapping
@@ -70,7 +97,11 @@ NICHE_KEYWORDS = {
     "art": ["art", "artist", "painting", "drawing", "creative", "design", "gallery"],
     "pets": ["pets", "dog", "cat", "animal", "puppy", "kitten", "pet care"],
     "parenting": ["parenting", "family", "kids", "children", "mom", "dad", "baby"],
-    "automotive": ["car", "auto", "vehicle", "motorcycle", "racing", "automotive"]
+    "automotive": ["car", "auto", "vehicle", "motorcycle", "racing", "automotive"],
+    "home": ["home", "interior", "decor", "renovation", "DIY", "gardening", "landscaping"],
+    "finance": ["finance", "money", "investment", "stock", "trading", "cryptocurrency", "savings"],
+    "electronics": ["electronics", "gadgets", "devices", "smartphone", "laptop", "tablet"],
+    "photography": ["photography", "photo", "camera", "videography", "videographer", "photographer", "film"]
 }
 
 # Pydantic models for request/response
@@ -81,7 +112,7 @@ class ChatMessage(BaseModel):
 class InfluencerFinderRequest(BaseModel):
     input_query: str
     ChatHistory: List[ChatMessage] = []
-    user_id: str
+    user_id: int
 
 class InfluencerFinderResponse(BaseModel):
     chat_history: List[ChatMessage]
@@ -136,7 +167,7 @@ def extract_social_media_platforms(user_input):
             if code not in platforms:
                 platforms.append(code)
     
-    return ",".join(platforms) if platforms else None
+    return ",".join(platforms) if platforms else "INST,FB,TW,YT,TT,TG" # Default to all platforms
 
 def extract_location(user_input):
     """Extract location from user input."""
@@ -171,7 +202,9 @@ def should_fetch_influencers(user_input, chat_history):
     """Determine if we should fetch influencers based on user input and chat history."""
     # Keywords that indicate user wants to find influencers
     fetch_keywords = [
-        "find", "search", "get", "show", "looking for", "need", "want",
+        "find", "search", "get", "show", "looking for", "need", "want", 
+        "give me", "fetch", "collect", "source", "discover",
+        "top", "best", "popular", "influencers", "influencers",
         "influencer", "blogger", "creator", "content creator", "youtuber"
     ]
     
@@ -294,7 +327,6 @@ def fetch_social_media_influencers(
             return {"data": [], "error": "No influencer data returned by API"}
 
         print(f"API Response Status: {response.status_code}")
-        print(f"API Response: {api_response}")
         return api_response
 
     except requests.exceptions.HTTPError as he:
@@ -401,12 +433,21 @@ def create_prompt_template():
         template="""
         You are a helpful AI assistant that specializes in finding and analyzing social media influencers.
 
+        **CRITICAL INSTRUCTIONS**:
+        ⚠️ **NEVER PROVIDE FAKE, DUMMY, OR FABRICATED DATA** ⚠️
+        - Only work with REAL data provided in the Chat History section
+        - If no chat history data is available, do NOT create fictional influencer information
+        - If chat history is empty or contains no influencer data, only suggest fetching new data or ask for clarification
+        - NEVER generate sample data, placeholder information, or hypothetical results
+        - Don't give any fake influencer data, always fetch from the API
+        - If the user query is 'exit', 'quit', or 'end', respond with 'Session ended. Chat history saved.' and do not process further.
+
         **Your Current Task:**
         Based on the user's query and any available chat history data, provide a helpful response.
 
         **Available Data:**
-        Chat History: {ChatHistory}
-        User Query: {Query}
+        ChatHistory: {{ChatHistory}}
+        UserQuery: {{Query}}
 
         **Instructions:**
         1. If the chat history contains influencer data, analyze it and provide insights, rankings, or summaries as requested.
@@ -414,14 +455,40 @@ def create_prompt_template():
         3. For general questions about influencers, social media, or marketing, provide helpful information.
         4. Always be clear, helpful, and professional in your responses.
         5. If you need to fetch new influencer data, clearly state what information you need and suggest the next steps.
-        6. Don't give any fake influencer data, always fetch from the API.
-        
 
         **Response Guidelines:**
         - Be concise but comprehensive
         - Use clear formatting for any data presentation
         - Provide actionable insights when possible
         - If data is missing, clearly explain what's needed
+
+        **JSON Output Format for Influencer Data:**
+        When analyzing and presenting influencer data from Chat History, format the results as follows:
+        Store_in_Notion_database  
+        ```json
+        [
+          {{
+            "Influencer Name": "actual_name_from_chat_history",
+            "Handle": "actual_handle_from_chat_history",
+            "Platform": "actual_platform_from_chat_history",
+            "Followers": actual_followers_count_number,
+            "Engagement Rate": actual_engagement_rate_number,
+            "Average Interactions": actual_avg_interactions_number,
+            "Quality Score": actual_quality_score_number,
+            "Verified": actual_verification_status,
+            "Location": "actual_location_from_chat_history",
+            "Profile URL": "actual_profile_url_from_chat_history",
+            "Ranking Score": actual_ranking_score_number
+          }}
+        ]
+        ```
+        
+        **Important JSON Rules:**
+        - Extract all values from actual chat history data only
+        - Use actual numbers without quotes for numerical fields
+        - Include all available fields from the chat history
+        - Maintain consistent formatting across all entries
+        - Group by platform when presenting multiple influencers
         """,
         input_variables=['ChatHistory', 'Query']
     )

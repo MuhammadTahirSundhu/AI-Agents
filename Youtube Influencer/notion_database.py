@@ -222,31 +222,34 @@ def split_text(text: str, max_length: int = 1800) -> List[Dict[str, Dict[str, st
     """Split text into chunks for Notion's rich_text limit (2000 characters per block)."""
     return [{"text": {"content": text[i:i + max_length]}} for i in range(0, len(text), max_length)]
 
-async def create_chat_history(input_query: str, user_id: str, chat_history: List[Dict[str, str]], response: str) -> Union[str, None]:
+async def create_chat_history(input_query: str, user_id: int, chat_history: List[Dict[str, str]], response: str) -> Union[str, None]:
     """Store or update chat history in the Notion database for a given user_id."""
     try:
         CHAT_HISTORY_DB_ID = os.getenv("CHAT_HISTORY_DB_ID")
         if not CHAT_HISTORY_DB_ID:
             print("Error: CHAT_HISTORY_DB_ID not found in environment variables")
             return None
-
+        
         chat_history_str = json.dumps(chat_history, ensure_ascii=False, indent=2)
         chat_history_blocks = split_text(chat_history_str) if chat_history_str else []
-
+        
+        # Convert user_id to string for Notion title property
+        user_id_str = str(user_id) if user_id is not None else ""
+        
         properties = {
-            "User ID": {"title": [{"text": {"content": user_id}}] if user_id else []},
+            "User ID": {"title": [{"text": {"content": user_id_str}}] if user_id is not None else []},
             "Query": {"rich_text": [{"text": {"content": input_query}}] if input_query else []},
             "Chat History": {"rich_text": chat_history_blocks}
         }
-
+        
         query_response = await notion.databases.query(
             database_id=CHAT_HISTORY_DB_ID,
             filter={
                 "property": "User ID",
-                "title": {"equals": user_id}
+                "title": {"equals": user_id_str}
             }
         )
-
+        
         if query_response["results"]:
             page_id = query_response["results"][0]["id"]
             await notion.pages.update(page_id=page_id, properties=properties)
@@ -259,7 +262,6 @@ async def create_chat_history(input_query: str, user_id: str, chat_history: List
             )
             print(f"Created new chat history for user_id {user_id}: {create_response['id']}")
             return create_response["id"]
-
     except Exception as e:
         print(f"Error in create_chat_history: {str(e)}")
         return None
