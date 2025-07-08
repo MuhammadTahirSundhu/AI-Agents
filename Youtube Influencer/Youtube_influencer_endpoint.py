@@ -50,82 +50,82 @@ def convert_langchain_to_dict(chat_history):
     """Convert LangChain message objects to dictionary format."""
     return [{"role": msg.type, "content": msg.content} for msg in chat_history]
 
-def call_llm(prompt, chat_history):
-    """Call the external LLM API."""
-    url = "https://206c-20-106-58-127.ngrok-free.app/chat"
-    prompt_text = prompt.text if hasattr(prompt, 'text') else str(prompt)
-    
-    # Convert chat history to string format for the system message
-    chat_history_str = ""
-    for msg in chat_history:
-        chat_history_str += f"{msg.type}: {msg.content}\n"
-    
-    payload = {
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are an ethical AI Influencer Sourcing Agent designed to assist users in "
-                    "finding YouTube influencers for marketing campaigns or answering general queries. "
-                    "Your responses must be honest, transparent, and respect privacy. "
-                    "You have access to a function for fetching influencer data and must store results before responding. "
-                    "Interpret user intent, suggest functions when unclear, and prompt for missing parameters."
-                    f"\n**Chat History**\n{chat_history_str}"
-                )
-            },
-            {
-                "role": "user",
-                "content": prompt_text
-            }
-        ],
-        "temperature": 0.5,
-        "model": "gpt-4o"
-    }
-    
-    try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        api_response = response.json()
-        if api_response.get("status") == "success":
-            return api_response.get("response")
-        else:
-            return f"Error: API request failed - {api_response.get('message', 'No message provided')}"
-    except requests.RequestException as e:
-        return f"Error: Failed to connect to the API - {str(e)}"
-
 # def call_llm(prompt, chat_history):
-#     """Call the OpenAI API with GPT-4o model."""
-#     from openai import OpenAI
-    
+#     """Call the external LLM API."""
+#     url = "https://206c-20-106-58-127.ngrok-free.app/chat"
 #     prompt_text = prompt.text if hasattr(prompt, 'text') else str(prompt)
     
-#     role_mapping = {
-#         "human": "user",
-#         "ai": "assistant",
-#         "system": "system",
-#         "assistant": "assistant",
-#         "user": "user"
+#     # Convert chat history to string format for the system message
+#     chat_history_str = ""
+#     for msg in chat_history:
+#         chat_history_str += f"{msg.type}: {msg.content}\n"
+    
+#     payload = {
+#         "messages": [
+#             {
+#                 "role": "system",
+#                 "content": (
+#                     "You are an ethical AI Influencer Sourcing Agent designed to assist users in "
+#                     "finding YouTube influencers for marketing campaigns or answering general queries. "
+#                     "Your responses must be honest, transparent, and respect privacy. "
+#                     "You have access to a function for fetching influencer data and must store results before responding. "
+#                     "Interpret user intent, suggest functions when unclear, and prompt for missing parameters."
+#                     f"\n**Chat History**\n{chat_history_str}"
+#                 )
+#             },
+#             {
+#                 "role": "user",
+#                 "content": prompt_text
+#             }
+#         ],
+#         "temperature": 0.5,
+#         "model": "gpt-4o"
 #     }
     
-#     messages = [
-#         {"role": "system", "content": """You are an ethical AI Influencer Sourcing Agent designed to assist users in finding YouTube influencers for marketing campaigns or answering general queries. 
-#         Your responses must be honest, transparent, and respect privacy. You have access to a function for fetching influencer data and must store results before responding. 
-#         Interpret user intent, suggest functions when unclear, and prompt for missing parameters."""},
-#         *[{"role": role_mapping.get(msg.type, "user"), "content": msg.content} for msg in chat_history],
-#         {"role": "user", "content": prompt_text}
-#     ]
-
 #     try:
-#         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-#         response = client.chat.completions.create(
-#             model="gpt-4o",
-#             messages=messages,
-#             temperature=0.5
-#         )
-#         return response.choices[0].message.content
-#     except Exception as e:
-#         print(f"OpenAI API failed: {str(e)}")
-#         return f"Error: Failed to connect to OpenAI API - {str(e)}"
+#         response = requests.post(url, json=payload)
+#         response.raise_for_status()
+#         api_response = response.json()
+#         if api_response.get("status") == "success":
+#             return api_response.get("response")
+#         else:
+#             return f"Error: API request failed - {api_response.get('message', 'No message provided')}"
+#     except requests.RequestException as e:
+#         return f"Error: Failed to connect to the API - {str(e)}"
+
+def call_llm(prompt, chat_history):
+    """Call the OpenAI API with GPT-4o model."""
+    from openai import OpenAI
+    
+    prompt_text = prompt.text if hasattr(prompt, 'text') else str(prompt)
+    
+    role_mapping = {
+        "human": "user",
+        "ai": "assistant",
+        "system": "system",
+        "assistant": "assistant",
+        "user": "user"
+    }
+    
+    messages = [
+        {"role": "system", "content": """You are an ethical AI Influencer Sourcing Agent designed to assist users in finding YouTube influencers for marketing campaigns or answering general queries. 
+        Your responses must be honest, transparent, and respect privacy. You have access to a function for fetching influencer data and must store results before responding. 
+        Interpret user intent, suggest functions when unclear, and prompt for missing parameters."""},
+        *[{"role": role_mapping.get(msg.type, "user"), "content": msg.content} for msg in chat_history],
+        {"role": "user", "content": prompt_text}
+    ]
+
+    try:
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0.5
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"OpenAI API failed: {str(e)}")
+        return f"Error: Failed to connect to OpenAI API - {str(e)}"
     
 def extract_json_response_to_list(input_text):
     """Extract JSON data from input text and store it in a list."""

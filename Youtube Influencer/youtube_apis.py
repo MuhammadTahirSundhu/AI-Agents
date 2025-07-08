@@ -379,7 +379,6 @@ def fetch_channel_with_their_avg_comments(method, max_results, niche=None):
     
     return result
 
-
 def parse_json_to_context_string(json_data: dict) -> str:
     """
     Parse JSON data containing channel, video, and comment information into a single string for LLM context.
