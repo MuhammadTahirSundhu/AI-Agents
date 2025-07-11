@@ -24,7 +24,7 @@ class ChatMessage(BaseModel):
 class InfluencerFinderRequest(BaseModel):
     input_query: str
     ChatHistory: List[ChatMessage] = []
-    user_id: int
+    user_id: str
 
 class InfluencerFinderResponse(BaseModel):
     chat_history: List[ChatMessage]
